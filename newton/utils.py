@@ -78,9 +78,21 @@ __all__ += [
 # world utils
 # ==================================================================================
 from ._src.utils import compute_world_offsets  # noqa: E402
+from ._src.utils.recorder import (  # noqa: E402
+    RecorderBasic,
+    RecorderModelAndState,
+)
 
 __all__ += [
     "compute_world_offsets",
+]
+
+# ==================================================================================
+# recorder utils
+# ==================================================================================
+__all__ += [
+    "RecorderBasic",
+    "RecorderModelAndState",
 ]
 
 # ==================================================================================
