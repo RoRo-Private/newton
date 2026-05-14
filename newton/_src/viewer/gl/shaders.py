@@ -329,8 +329,8 @@ void main()
     vec3 F_max = mix(F0, vec3(1.0), 1.0 - roughness);
     vec3 F = F0 + (F_max - F0) * pow(1.0 - HdotV, 5.0);
 
-    // Cook-Torrance specular BRDF
-    vec3 spec = (D * G * F) / (4.0 * NdotV * NdotL + 0.0001);
+    // Specular disabled: set to zero to eliminate light reflections.
+    vec3 spec = vec3(0.0);
 
     // Diffuse uses remaining energy not reflected
     vec3 kD = (1.0 - F) * (1.0 - metallic);
@@ -358,13 +358,7 @@ void main()
     float spotAttenuation = SpotlightAttenuation();
     vec3 color = ambient + (1.0 - shadow) * spotAttenuation * Lo;
 
-    // Environment / image-based lighting for metals
-    vec3 R = reflect(-V, N);
-    float env_lod = roughness * 8.0;
-    vec3 env_color = pow(sample_env_map(R, env_lod), vec3(2.2));
-    vec3 env_F = F0 + (F_max - F0) * pow(1.0 - NdotV, 5.0);
-    vec3 env_spec = env_color * env_F * env_intensity;
-    color += env_spec * metallic;
+    // Environment reflection disabled.
 
     // fog
     float dist = length(FragPos - view_pos);

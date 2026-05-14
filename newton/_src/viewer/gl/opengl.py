@@ -347,6 +347,10 @@ class MeshGL:
             return
         self.texture_id = texture_id
 
+    def set_albedo(self, r: float, g: float, b: float) -> None:
+        """Set the constant albedo color for this mesh (used when no per-vertex color is supplied)."""
+        self._albedo = (r, g, b)
+
     def render(self):
         if not self.hidden:
             gl = RendererGL.gl
@@ -359,13 +363,14 @@ class MeshGL:
             gl.glActiveTexture(gl.GL_TEXTURE1)
             if self.texture_id is not None:
                 gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture_id)
+                # material = (roughness, metallic, checker, texture_enable)
+                gl.glVertexAttrib4f(8, 0.5, 0.0, 0.0, 1.0)
             else:
                 gl.glBindTexture(gl.GL_TEXTURE_2D, RendererGL.get_fallback_texture())
 
             # Set per-mesh albedo and material (global state, not per-VAO).
             gl.glVertexAttrib3f(7, *self.color)
             gl.glVertexAttrib4f(8, *self.material)
-
             gl.glBindVertexArray(self.vao)
             gl.glDrawElements(gl.GL_TRIANGLES, self.num_indices, gl.GL_UNSIGNED_INT, None)
             gl.glBindVertexArray(0)

@@ -775,6 +775,8 @@ class ViewerGL(ViewerBase):
         self.objects[name].update(points, indices, normals, uvs, texture)
         self.objects[name].hidden = hidden
         self.objects[name].backface_culling = backface_culling
+        if color is not None:
+            self.objects[name].set_albedo(*color)
 
         if color is not None:
             self.objects[name].color = (float(color[0]), float(color[1]), float(color[2]))
