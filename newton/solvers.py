@@ -401,6 +401,11 @@ See the `DiffSim examples on GitHub`_ for the current reference workflows.
 
 # solver types
 from ._src.solvers import (
+    CollisionSample,
+    CouplerAdapter,
+    CouplerOptions,
+    LegacyLikeCoupler,
+    RigidCouplingMaterial,
     SolverBase,
     SolverFeatherstone,
     SolverImplicitMPM,
@@ -417,6 +422,11 @@ from ._src.solvers import (
 from ._src.solvers.flags import SolverNotifyFlags
 
 __all__ = [
+    "CollisionSample",
+    "CouplerAdapter",
+    "CouplerOptions",
+    "LegacyLikeCoupler",
+    "RigidCouplingMaterial",
     "SolverBase",
     "SolverFeatherstone",
     "SolverImplicitMPM",

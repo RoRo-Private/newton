@@ -418,6 +418,11 @@ See the `DiffSim examples on GitHub`_ for the current reference workflows.
    :toctree: _generated
    :nosignatures:
 
+   CollisionSample
+   CouplerAdapter
+   CouplerOptions
+   LegacyLikeCoupler
+   RigidCouplingMaterial
    SolverBase
    SolverFeatherstone
    SolverImplicitMPM
