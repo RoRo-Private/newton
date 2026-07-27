@@ -146,6 +146,23 @@ def assemble_tet_vertex_force_and_hessian(
 
 
 @wp.func
+def compute_tet_vertex_material_gradient(Dm_inv: wp.mat33, v_order: int) -> wp.vec3:
+    """Return the material-space gradient for one tetrahedron vertex."""
+    if v_order == 0:
+        return wp.vec3(
+            -(Dm_inv[0, 0] + Dm_inv[1, 0] + Dm_inv[2, 0]),
+            -(Dm_inv[0, 1] + Dm_inv[1, 1] + Dm_inv[2, 1]),
+            -(Dm_inv[0, 2] + Dm_inv[1, 2] + Dm_inv[2, 2]),
+        )
+    elif v_order == 1:
+        return wp.vec3(Dm_inv[0, 0], Dm_inv[0, 1], Dm_inv[0, 2])
+    elif v_order == 2:
+        return wp.vec3(Dm_inv[1, 0], Dm_inv[1, 1], Dm_inv[1, 2])
+    else:
+        return wp.vec3(Dm_inv[2, 0], Dm_inv[2, 1], Dm_inv[2, 2])
+
+
+@wp.func
 def evaluate_volumetric_neo_hookean_force_and_hessian(
     tet_id: int,
     v_order: int,
@@ -223,18 +240,7 @@ def evaluate_volumetric_neo_hookean_force_and_hessian(
     H = rest_volume * H
 
     # ============ Assemble Pointwise Force ============
-    if v_order == 0:
-        m = wp.vec3(
-            -(Dm_inv[0, 0] + Dm_inv[1, 0] + Dm_inv[2, 0]),
-            -(Dm_inv[0, 1] + Dm_inv[1, 1] + Dm_inv[2, 1]),
-            -(Dm_inv[0, 2] + Dm_inv[1, 2] + Dm_inv[2, 2]),
-        )
-    elif v_order == 1:
-        m = wp.vec3(Dm_inv[0, 0], Dm_inv[0, 1], Dm_inv[0, 2])
-    elif v_order == 2:
-        m = wp.vec3(Dm_inv[1, 0], Dm_inv[1, 1], Dm_inv[1, 2])
-    else:
-        m = wp.vec3(Dm_inv[2, 0], Dm_inv[2, 1], Dm_inv[2, 2])
+    m = compute_tet_vertex_material_gradient(Dm_inv, v_order)
 
     force, hessian = assemble_tet_vertex_force_and_hessian(P_vec, H, m[0], m[1], m[2])
 
@@ -292,6 +298,84 @@ def evaluate_volumetric_neo_hookean_force_and_hessian(
     return force, hessian
 
 
+@wp.func
+def evaluate_active_tet_contraction_force_and_hessian(
+    tet_id: int,
+    v_order: int,
+    pos: wp.array[wp.vec3],
+    tet_indices: wp.array2d[wp.int32],
+    Dm_inv: wp.mat33,
+    directors: wp.array[wp.vec3],
+    activations: wp.array[float],
+    active_stiffness: wp.array[float],
+) -> tuple[wp.vec3, wp.mat33]:
+    """Evaluate active fiber force and its positive-semidefinite energy Hessian."""
+    zero_force = wp.vec3(0.0)
+    zero_hessian = wp.mat33(0.0)
+
+    activation = activations[tet_id]
+    stiffness = active_stiffness[tet_id]
+    if not wp.isfinite(activation) or not wp.isfinite(stiffness) or activation <= 0.0 or stiffness <= 0.0:
+        return zero_force, zero_hessian
+    activation = wp.min(activation, 1.0)
+
+    director = directors[tet_id]
+    director_length_sq = wp.dot(director, director)
+    if not wp.isfinite(director_length_sq) or director_length_sq < 1.0e-16:
+        return zero_force, zero_hessian
+    director = director / wp.sqrt(director_length_sq)
+
+    inv_rest_volume = wp.determinant(Dm_inv) * 6.0
+    if not wp.isfinite(inv_rest_volume) or inv_rest_volume <= 1.0e-12:
+        return zero_force, zero_hessian
+    rest_volume = 1.0 / inv_rest_volume
+
+    v0 = pos[tet_indices[tet_id, 0]]
+    v1 = pos[tet_indices[tet_id, 1]]
+    v2 = pos[tet_indices[tet_id, 2]]
+    v3 = pos[tet_indices[tet_id, 3]]
+    Ds = wp.matrix_from_cols(v1 - v0, v2 - v0, v3 - v0)
+    fiber = Ds * Dm_inv * director
+
+    material_gradient = compute_tet_vertex_material_gradient(Dm_inv, v_order)
+    beta = wp.dot(material_gradient, director)
+    scale = rest_volume * stiffness * activation
+
+    force = -scale * beta * fiber
+    hessian = scale * beta * beta * wp.identity(n=3, dtype=float)
+
+    # TODO: Add an exclusive active-strain mode using F_elastic = F * inverse(F_active),
+    # where F_active = lambda_parallel*n*n^T + lambda_perp*(I - n*n^T).
+    return force, hessian
+
+
+@wp.kernel
+def evaluate_active_tet_contraction_force_and_hessian_kernel(
+    v_order: int,
+    pos: wp.array[wp.vec3],
+    tet_indices: wp.array2d[int],
+    tet_poses: wp.array[wp.mat33],
+    directors: wp.array[wp.vec3],
+    activations: wp.array[float],
+    stiffness: wp.array[float],
+    force: wp.array[wp.vec3],
+    hessian: wp.array[wp.mat33],
+):
+    """Expose the active tet evaluator for analytic validation."""
+    force_value, hessian_value = evaluate_active_tet_contraction_force_and_hessian(
+        0,
+        v_order,
+        pos,
+        tet_indices,
+        tet_poses[0],
+        directors,
+        activations,
+        stiffness,
+    )
+    force[0] = force_value
+    hessian[0] = hessian_value
+
+
 # ============ Helper Functions ============
 
 
@@ -299,18 +383,7 @@ def evaluate_volumetric_neo_hookean_force_and_hessian(
 def compute_G_matrix(Dm_inv: wp.mat33, v_order: int) -> mat93:
     """G_i = ∂vec(F)/∂x_i"""
 
-    if v_order == 0:
-        m = wp.vec3(
-            -(Dm_inv[0, 0] + Dm_inv[1, 0] + Dm_inv[2, 0]),
-            -(Dm_inv[0, 1] + Dm_inv[1, 1] + Dm_inv[2, 1]),
-            -(Dm_inv[0, 2] + Dm_inv[1, 2] + Dm_inv[2, 2]),
-        )
-    elif v_order == 1:
-        m = wp.vec3(Dm_inv[0, 0], Dm_inv[0, 1], Dm_inv[0, 2])
-    elif v_order == 2:
-        m = wp.vec3(Dm_inv[1, 0], Dm_inv[1, 1], Dm_inv[1, 2])
-    else:
-        m = wp.vec3(Dm_inv[2, 0], Dm_inv[2, 1], Dm_inv[2, 2])
+    m = compute_tet_vertex_material_gradient(Dm_inv, v_order)
 
     # G = [m[0]*I₃, m[1]*I₃, m[2]*I₃]ᵀ (stacked vertically)
     return mat93(
@@ -2421,6 +2494,9 @@ def solve_elasticity_tile(
     tet_indices: wp.array2d[wp.int32],
     tet_poses: wp.array[wp.mat33],
     tet_materials: wp.array2d[float],
+    tet_active_directors: wp.array[wp.vec3],
+    tet_active_activations: wp.array[float],
+    tet_active_stiffness: wp.array[float],
     particle_adjacency: MeshAdjacencyData,
     particle_forces: wp.array[wp.vec3],
     particle_hessians: wp.array[wp.mat33],
@@ -2543,6 +2619,20 @@ def solve_elasticity_tile(
                 f += f_tet
                 h += h_tet
 
+            if tet_active_activations[nei_tet_index] > 0.0 and tet_active_stiffness[nei_tet_index] > 0.0:
+                f_active, h_active = evaluate_active_tet_contraction_force_and_hessian(
+                    nei_tet_index,
+                    vertex_order_on_tet,
+                    pos,
+                    tet_indices,
+                    tet_poses[nei_tet_index],
+                    tet_active_directors,
+                    tet_active_activations,
+                    tet_active_stiffness,
+                )
+                f += f_active
+                h += h_active
+
     f_tile = wp.tile(f, preserve_type=True)
     h_tile = wp.tile(h, preserve_type=True)
 
@@ -2585,6 +2675,9 @@ def solve_elasticity(
     tet_indices: wp.array2d[wp.int32],
     tet_poses: wp.array[wp.mat33],
     tet_materials: wp.array2d[float],
+    tet_active_directors: wp.array[wp.vec3],
+    tet_active_activations: wp.array[float],
+    tet_active_stiffness: wp.array[float],
     particle_adjacency: MeshAdjacencyData,
     particle_forces: wp.array[wp.vec3],
     particle_hessians: wp.array[wp.mat33],
@@ -2688,6 +2781,20 @@ def solve_elasticity(
 
                 f += f_tet
                 h += h_tet
+
+            if tet_active_activations[nei_tet_index] > 0.0 and tet_active_stiffness[nei_tet_index] > 0.0:
+                f_active, h_active = evaluate_active_tet_contraction_force_and_hessian(
+                    nei_tet_index,
+                    vertex_order_on_tet,
+                    pos,
+                    tet_indices,
+                    tet_poses[nei_tet_index],
+                    tet_active_directors,
+                    tet_active_activations,
+                    tet_active_stiffness,
+                )
+                f += f_active
+                h += h_active
 
     # fmt: off
     if wp.static("overall_force_hessian" in VBD_DEBUG_PRINTING_OPTIONS):

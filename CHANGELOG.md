@@ -19,6 +19,7 @@
 - Add list-of-pattern and explicit-index selectors to `ArticulationView`.
 - Add `newton[onnx]` for ONNX policy inference through Warp-NN; `ControllerNeuralMLP`, `ControllerNeuralLSTM`, and RL policy examples can run exported `.onnx` policies without requiring PyTorch for ONNX execution.
 - Add three VBD contact examples — `vbd_rigid_rigid_contact`, `vbd_soft_rigid_contact`, and `vbd_soft_rigid_mix_contact` — demonstrating rigid-rigid, soft (particle-rigid), and mixed cloth-bag contacts
+- Add a `softbody_tet_activation` example demonstrating active bending of a tetrahedral plate.
 - Add masked rigid-body reset support to `SolverVBD`; particle resets are not yet supported. (#3256)
 - Add viewer layer system to overlay multiple solvers/models in supported rendering viewers; call `ViewerBase.activate(layer_id)` to route subsequent `set_model` / `log_state` / `log_*` calls into a named layer, `ViewerBase.set_layer_visible()` to toggle layers independently, and `ViewerBase.set_layer_transform()` to position layers side-by-side. See `example_basic_multi_solver_overlay.py`
 - Add `Heightfield.create_from_mesh()` and `newton.utils.rasterize_mesh_to_heightfield()` to build a heightfield collider by ray-casting a `wp.Mesh`, replacing a large static terrain mesh with an equivalent heightfield.
@@ -30,6 +31,7 @@
 - Add `sign_method` argument to `Mesh.build_sdf` and `SDF.create_from_mesh` support for a `"normal"` (angle-weighted pseudo-normal) sign strategy, for selecting the inside/outside sign of the baked SDF (`"auto"`, `"parity"`, `"winding"`, or `"normal"`).
 - Add `forward_depth_image` output support to `SensorTiledCamera.update()` and `SensorTiledCamera.utils.create_forward_depth_image_output()` for native forward-depth rendering without post-processing `depth_image`.
 - Add optional `shear_stiffness`/`shear_damping` and `twist_stiffness`/`twist_damping` controls to `ModelBuilder.add_joint_cable()`, `ModelBuilder.add_rod()`, and `ModelBuilder.add_rod_graph()`; omitted shear defaults to stretch and omitted twist defaults to bend for compatibility.
+- Add per-tetrahedron directional active contraction energy to `SolverVBD` and an upper-layer plate-bending example.
 - Add `newton.utils.CableStiffness` and extend `newton.utils.create_cable_stiffness_from_elastic_moduli()` with `poissons_ratio`/`shear_modulus` inputs that include torsional `GJ/L` stiffness.
 - Add VBD cable validation examples covering bend stiffness, analytical bend/twist response, torsion material mapping, routed twist transfer, twist-buckling link verification, Michell/Zajac threshold behavior, and Dahl hysteresis.
 - Add a cable plectoneme example demonstrating twist-driven supercoiling with self-contact.

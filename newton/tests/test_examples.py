@@ -1174,6 +1174,34 @@ add_example_test(
     test_options_cpu={"num-frames": 2},
     use_viewer=True,
 )
+add_example_test(
+    TestSoftbodyExamples,
+    name="softbody.example_softbody_tet_activation",
+    devices=test_devices,
+    test_options={
+        "num-frames": 120,
+        "activation-duration": 0.5,
+        "length-cells": 8,
+        "width-cells": 3,
+    },
+    use_viewer=True,
+)
+add_example_test(
+    TestSoftbodyExamples,
+    name="softbody.example_softbody_vbd_active_contraction",
+    devices=test_devices,
+    test_options={
+        "num-frames": 90,
+        "ramp-time": 0.25,
+        "dim-x": 6,
+        "dim-y": 4,
+        "dim-z": 2,
+        "substeps": 5,
+        "iterations": 10,
+        "log-interval": 90,
+    },
+    use_viewer=True,
+)
 
 
 class TestKaminoExamples(unittest.TestCase):

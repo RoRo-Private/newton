@@ -523,6 +523,13 @@ class SolverVBD(SolverBase, CouplingInterface):
         particle_external_edge_contact_filtering_map: dict | None,
     ):
         """Initialize particle-specific data structures and settings."""
+        self.tet_active_directors = wp.zeros(model.tet_count, dtype=wp.vec3, device=self.device)
+        """Material-space active contraction directions, shape [tet_count, 3]."""
+        self.tet_active_activations = wp.zeros(model.tet_count, dtype=float, device=self.device)
+        """Active contraction amplitudes, shape [tet_count]."""
+        self.tet_active_stiffness = wp.zeros(model.tet_count, dtype=float, device=self.device)
+        """Active contraction stiffness [Pa], shape [tet_count]."""
+
         # Early exit if no particles
         if model.particle_count == 0:
             return
@@ -600,6 +607,59 @@ class SolverVBD(SolverBase, CouplingInterface):
         self.pos_prev_collision_detection = wp.zeros_like(model.particle_q, device=self.device)
         self.particle_displacements = wp.zeros(self.model.particle_count, dtype=wp.vec3, device=self.device)
         self.truncation_ts = wp.zeros(self.model.particle_count, dtype=float, device=self.device)
+
+    def set_tet_active_contraction(
+        self,
+        *,
+        directors: np.ndarray | wp.array[wp.vec3],
+        activations: np.ndarray | wp.array[wp.float32],
+        stiffness: np.ndarray | wp.array[wp.float32],
+    ) -> None:
+        """Configure per-tetrahedron active directional contraction.
+
+        The active energy is
+        :math:`E = 0.5 V_0 k_a a \\lVert F n \\rVert^2`. Directors are
+        normalized by the evaluator; directors shorter than ``1e-8`` and
+        non-positive stiffness values disable the term. Activations are clamped
+        to ``[0, 1]`` by both this setter and the evaluator.
+
+        Existing solver-owned arrays are updated in place so captured graphs
+        keep valid pointers. After setup, their values may also be changed
+        in place between graph launches.
+
+        Args:
+            directors: Material-space directors with shape ``(tet_count, 3)``.
+            activations: Activation values with shape ``(tet_count,)``.
+            stiffness: Active stiffness values [Pa] with shape ``(tet_count,)``.
+
+        Raises:
+            TypeError: If an input has an unsupported Warp dtype.
+            ValueError: If an input has the wrong shape, device, or non-finite values.
+        """
+        tet_count = self.model.tet_count
+
+        def to_numpy(name, value, shape, warp_dtype):
+            if isinstance(value, wp.array):
+                if value.device != self.device:
+                    raise ValueError(f"{name} is on device {value.device}, expected solver device {self.device}.")
+                if value.dtype != warp_dtype:
+                    raise TypeError(f"{name} must have Warp dtype {warp_dtype}, got {value.dtype}.")
+                array = value.numpy()
+            else:
+                array = np.asarray(value, dtype=np.float32)
+            if array.shape != shape:
+                raise ValueError(f"{name} must have shape {shape}, got {array.shape}.")
+            if not np.all(np.isfinite(array)):
+                raise ValueError(f"{name} must contain only finite values.")
+            return np.asarray(array, dtype=np.float32)
+
+        directors_np = to_numpy("directors", directors, (tet_count, 3), wp.vec3)
+        activations_np = to_numpy("activations", activations, (tet_count,), wp.float32)
+        stiffness_np = to_numpy("stiffness", stiffness, (tet_count,), wp.float32)
+
+        self.tet_active_directors.assign(directors_np)
+        self.tet_active_activations.assign(np.clip(activations_np, 0.0, 1.0))
+        self.tet_active_stiffness.assign(stiffness_np)
 
     def _init_rigid_system(
         self,
@@ -2686,6 +2746,9 @@ class SolverVBD(SolverBase, CouplingInterface):
                         self.model.tet_indices,
                         self.model.tet_poses,
                         self.model.tet_materials,
+                        self.tet_active_directors,
+                        self.tet_active_activations,
+                        self.tet_active_stiffness,
                         self.particle_adjacency,
                         self.particle_forces,
                         self.particle_hessians,
@@ -2718,6 +2781,9 @@ class SolverVBD(SolverBase, CouplingInterface):
                         self.model.tet_indices,
                         self.model.tet_poses,
                         self.model.tet_materials,
+                        self.tet_active_directors,
+                        self.tet_active_activations,
+                        self.tet_active_stiffness,
                         self.particle_adjacency,
                         self.particle_forces,
                         self.particle_hessians,

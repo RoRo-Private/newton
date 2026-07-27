@@ -808,6 +808,9 @@ If you run the examples from a source checkout with uv, use
       </a>
     </td>
     <td align="center" width="33%">
+      <a href="https://github.com/newton-physics/newton/blob/main/newton/examples/softbody/example_softbody_tet_activation.py">
+        <img width="320" src="https://raw.githubusercontent.com/newton-physics/newton/main/docs/images/examples/example_softbody_tet_activation.jpg" alt="Softbody Tet Activation">
+      </a>
     </td>
   </tr>
   <tr>
@@ -816,6 +819,27 @@ If you run the examples from a source checkout with uv, use
     </td>
     <td align="center" width="33%">
       <code>python -m newton.examples softbody_franka</code>
+    </td>
+    <td align="center" width="33%">
+      <code>python -m newton.examples softbody_tet_activation</code>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="33%">
+      <a href="https://github.com/newton-physics/newton/blob/main/newton/examples/softbody/example_softbody_vbd_active_contraction.py">
+        <img width="320" src="https://raw.githubusercontent.com/newton-physics/newton/main/docs/images/examples/example_softbody_vbd_active_contraction.jpg" alt="Softbody VBD Active Contraction Plate">
+      </a>
+    </td>
+    <td align="center" width="33%">
+    </td>
+    <td align="center" width="33%">
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="33%">
+      <code>python -m newton.examples softbody_vbd_active_contraction</code>
+    </td>
+    <td align="center" width="33%">
     </td>
     <td align="center" width="33%">
     </td>
