@@ -150,14 +150,17 @@ def test_active_tet_finite_difference(test, device):
         ],
         dtype=np.float64,
     )
-    positions = rest_positions @ np.array(
-        [
-            [0.92, 0.04, -0.02],
-            [0.03, 1.05, 0.06],
-            [0.01, -0.03, 0.97],
-        ],
-        dtype=np.float64,
-    ).T
+    positions = (
+        rest_positions
+        @ np.array(
+            [
+                [0.92, 0.04, -0.02],
+                [0.03, 1.05, 0.06],
+                [0.01, -0.03, 0.97],
+            ],
+            dtype=np.float64,
+        ).T
+    )
     cases = (
         np.array([1.0, 0.0, 0.0]),
         np.array([3.0, 0.0, 0.0]),
@@ -186,12 +189,8 @@ def test_active_tet_finite_difference(test, device):
                     positions_minus = positions.copy()
                     positions_plus[v_order, axis] += epsilon
                     positions_minus[v_order, axis] -= epsilon
-                    energy_plus = _active_energy(
-                        rest_positions, positions_plus, director, activation, stiffness
-                    )
-                    energy_minus = _active_energy(
-                        rest_positions, positions_minus, director, activation, stiffness
-                    )
+                    energy_plus = _active_energy(rest_positions, positions_plus, director, activation, stiffness)
+                    energy_minus = _active_energy(rest_positions, positions_minus, director, activation, stiffness)
                     energy_gradient[axis] = (energy_plus - energy_minus) / (2.0 * epsilon)
 
                     force_plus, _ = _evaluate_active_tet(
@@ -368,8 +367,12 @@ class TestSolverVBDActiveTet(unittest.TestCase):
 
 
 devices = get_test_devices()
-add_function_test(TestSolverVBDActiveTet, "test_active_tet_finite_difference", test_active_tet_finite_difference, devices=devices)
-add_function_test(TestSolverVBDActiveTet, "test_active_tet_disabled_inputs", test_active_tet_disabled_inputs, devices=devices)
+add_function_test(
+    TestSolverVBDActiveTet, "test_active_tet_finite_difference", test_active_tet_finite_difference, devices=devices
+)
+add_function_test(
+    TestSolverVBDActiveTet, "test_active_tet_disabled_inputs", test_active_tet_disabled_inputs, devices=devices
+)
 add_function_test(
     TestSolverVBDActiveTet,
     "test_active_tet_setter_validation",
@@ -400,7 +403,9 @@ add_function_test(
     test_active_tet_stiffness_monotonicity,
     devices=devices,
 )
-add_function_test(TestSolverVBDActiveTet, "test_active_tet_free_body_com", test_active_tet_free_body_com, devices=devices)
+add_function_test(
+    TestSolverVBDActiveTet, "test_active_tet_free_body_com", test_active_tet_free_body_com, devices=devices
+)
 
 
 if __name__ == "__main__":

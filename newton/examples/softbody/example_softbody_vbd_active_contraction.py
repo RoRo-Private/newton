@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-"""Bend a soft-body plate using directional active tetrahedral contraction."""
+"""Compare active bending of three VBD plates with different materials."""
 
 import argparse
 
@@ -14,7 +14,7 @@ from newton.solvers import SolverVBD
 
 
 class Example:
-    """Cantilevered plate bent by contracting tetrahedra in its upper layer."""
+    """Bend soft, medium, and stiff plates using identical active contraction."""
 
     def __init__(self, viewer, args):
         self.viewer = viewer
@@ -28,29 +28,47 @@ class Example:
         self.log_metrics_enabled = not args.test
         self.frame = 0
 
+        self.plate_names = ("soft", "medium", "stiff")
+        self.material_scales = np.asarray(args.material_scales, dtype=np.float32)
+        if not np.all(np.isfinite(self.material_scales)) or np.any(self.material_scales <= 0.0):
+            raise ValueError("material-scales must contain three positive finite values.")
+
+        plate_length = args.dim_x * args.cell_size
         plate_width = args.dim_y * args.cell_size
         plate_thickness = args.dim_z * args.thickness_cell_size
         if not 0.0 < args.active_layer_fraction < 1.0:
             raise ValueError("active-layer-fraction must be between 0 and 1.")
+
         builder = newton.ModelBuilder()
-        builder.add_soft_grid(
-            pos=wp.vec3(0.0, -0.5 * plate_width, -0.5 * plate_thickness),
-            rot=wp.quat_identity(),
-            vel=wp.vec3(0.0),
-            dim_x=args.dim_x,
-            dim_y=args.dim_y,
-            dim_z=args.dim_z,
-            cell_x=args.cell_size,
-            cell_y=args.cell_size,
-            cell_z=args.thickness_cell_size,
-            density=args.density,
-            k_mu=args.k_mu,
-            k_lambda=args.k_lambda,
-            k_damp=args.k_damp,
-            fix_left=args.fix_left,
-            particle_radius=0.0,
-            add_surface_mesh_edges=False,
-        )
+        self.plate_particle_ranges = []
+        self.plate_tet_ranges = []
+        self.plate_tri_ranges = []
+        plate_pitch = plate_length + args.plate_gap
+        for plate_index, material_scale in enumerate(self.material_scales):
+            particle_start = len(builder.particle_q)
+            tet_start = len(builder.tet_indices)
+            tri_start = len(builder.tri_indices)
+            builder.add_soft_grid(
+                pos=wp.vec3(plate_index * plate_pitch, -0.5 * plate_width, -0.5 * plate_thickness),
+                rot=wp.quat_identity(),
+                vel=wp.vec3(0.0),
+                dim_x=args.dim_x,
+                dim_y=args.dim_y,
+                dim_z=args.dim_z,
+                cell_x=args.cell_size,
+                cell_y=args.cell_size,
+                cell_z=args.thickness_cell_size,
+                density=args.density,
+                k_mu=args.k_mu * float(material_scale),
+                k_lambda=args.k_lambda * float(material_scale),
+                k_damp=args.k_damp,
+                fix_left=args.fix_left,
+                particle_radius=0.0,
+                add_surface_mesh_edges=False,
+            )
+            self.plate_particle_ranges.append((particle_start, len(builder.particle_q)))
+            self.plate_tet_ranges.append((tet_start, len(builder.tet_indices)))
+            self.plate_tri_ranges.append((tri_start, len(builder.tri_indices)))
         builder.color()
 
         self.model = builder.finalize()
@@ -83,43 +101,68 @@ class Example:
             stiffness=np.full(self.model.tet_count, args.active_stiffness, dtype=np.float32),
         )
 
-        tip_threshold = np.max(rest_positions[:, 0]) - 0.5 * args.cell_size
-        self.tip_indices = np.flatnonzero(rest_positions[:, 0] > tip_threshold)
-        self.initial_tip_center = np.mean(rest_positions[self.tip_indices], axis=0)
-        self.initial_metrics = self.measure(rest_positions)
-        self.current_metrics = self.initial_metrics
+        self.tip_indices = []
+        self.initial_tip_centers = []
+        self.initial_lengths = []
+        for particle_start, particle_end in self.plate_particle_ranges:
+            particle_indices = np.arange(particle_start, particle_end)
+            plate_positions = rest_positions[particle_start:particle_end]
+            tip_threshold = np.max(plate_positions[:, 0]) - 0.5 * args.cell_size
+            tip_indices = particle_indices[plate_positions[:, 0] > tip_threshold]
+            self.tip_indices.append(tip_indices)
+            self.initial_tip_centers.append(np.mean(rest_positions[tip_indices], axis=0))
+            self.initial_lengths.append(np.ptp(plate_positions[:, 0]))
+        self.initial_tip_centers = np.asarray(self.initial_tip_centers)
+        self.initial_lengths = np.asarray(self.initial_lengths)
+
+        tri_indices = self.model.tri_indices.numpy()
+        self.plate_mesh_indices = [
+            wp.array(
+                tri_indices[tri_start:tri_end].reshape(-1),
+                dtype=wp.int32,
+                device=self.model.device,
+            )
+            for tri_start, tri_end in self.plate_tri_ranges
+        ]
+        self.plate_colors = ((0.28, 0.58, 0.95), (0.95, 0.72, 0.25), (0.9, 0.3, 0.3))
         self.current_activation = 0.0
 
         self.viewer.set_model(self.model)
         if hasattr(self.viewer, "show_particles"):
             self.viewer.show_particles = False
+        if hasattr(self.viewer, "show_triangles"):
+            self.viewer.show_triangles = False
         if hasattr(self.viewer, "set_camera"):
-            self.viewer.set_camera(pos=wp.vec3(1.2, -1.5, 0.8), pitch=-20.0, yaw=118.0)
+            scene_center_x = plate_pitch + 0.5 * plate_length
+            self.viewer.set_camera(pos=wp.vec3(scene_center_x, -4.0, 1.25), pitch=-14.0, yaw=90.0)
 
         if self.log_metrics_enabled:
             active_fraction = np.mean(self.active_tet_mask)
+            for name, scale in zip(self.plate_names, self.material_scales, strict=True):
+                print(
+                    f"{name}: material scale={scale:.3g}, "
+                    f"k_mu={args.k_mu * scale:.3g} Pa, k_lambda={args.k_lambda * scale:.3g} Pa"
+                )
             print(f"Active upper-layer tetrahedra: {np.count_nonzero(self.active_tet_mask)}/{self.model.tet_count}")
             print(f"Active tet fraction: {active_fraction:.3f}")
-            print("time activation L/L0 W/W0 T/T0 V/V0 tip_dz/L0 COM_displacement")
+            print("time activation soft_tip_dz/L0 medium_tip_dz/L0 stiff_tip_dz/L0")
             self.log_metrics()
 
         self.graph = None
         self.capture()
 
-    def measure(self, positions):
-        extents = np.ptp(positions, axis=0)
-        tet_positions = positions[self.tet_indices]
-        ds = np.stack(
-            (
-                tet_positions[:, 1] - tet_positions[:, 0],
-                tet_positions[:, 2] - tet_positions[:, 0],
-                tet_positions[:, 3] - tet_positions[:, 0],
-            ),
-            axis=2,
+    def normalized_tip_deflections(self, positions):
+        return np.asarray(
+            [
+                (np.mean(positions[tip_indices], axis=0)[2] - initial_tip_center[2]) / initial_length
+                for tip_indices, initial_tip_center, initial_length in zip(
+                    self.tip_indices,
+                    self.initial_tip_centers,
+                    self.initial_lengths,
+                    strict=True,
+                )
+            ]
         )
-        volume = float(np.sum(np.abs(np.linalg.det(ds))) / 6.0)
-        center_of_mass = np.mean(positions, axis=0)
-        return extents, volume, center_of_mass
 
     def capture(self):
         if wp.get_device().is_cuda:
@@ -154,23 +197,28 @@ class Example:
 
     def log_metrics(self):
         positions = self.state_0.particle_q.numpy()
-        self.current_metrics = self.measure(positions)
-        extents, volume, center_of_mass = self.current_metrics
-        initial_extents, initial_volume, initial_center_of_mass = self.initial_metrics
-        ratios = extents / initial_extents
-        volume_ratio = volume / initial_volume
-        com_displacement = np.linalg.norm(center_of_mass - initial_center_of_mass)
-        tip_center = np.mean(positions[self.tip_indices], axis=0)
-        normalized_tip_deflection = (tip_center[2] - self.initial_tip_center[2]) / initial_extents[0]
+        tip_deflections = self.normalized_tip_deflections(positions)
         print(
             f"{self.sim_time:.3f} {self.current_activation:.3f} "
-            f"{ratios[0]:.6f} {ratios[1]:.6f} {ratios[2]:.6f} "
-            f"{volume_ratio:.6f} {normalized_tip_deflection:.6f} {com_displacement:.6e}"
+            f"{tip_deflections[0]:.6f} {tip_deflections[1]:.6f} {tip_deflections[2]:.6f}"
         )
 
     def render(self):
         self.viewer.begin_frame(self.sim_time)
         self.viewer.log_state(self.state_0)
+        for name, indices, color in zip(
+            self.plate_names,
+            self.plate_mesh_indices,
+            self.plate_colors,
+            strict=True,
+        ):
+            self.viewer.log_mesh(
+                f"active_plate_{name}",
+                self.state_0.particle_q,
+                indices,
+                color=color,
+                backface_culling=False,
+            )
         self.viewer.end_frame()
 
     def test_final(self):
@@ -181,21 +229,18 @@ class Example:
             lambda q, qd: wp.length(q) < 100.0 and wp.length(qd) < 100.0,
         )
         final_positions = self.state_0.particle_q.numpy()
-        self.current_metrics = self.measure(final_positions)
-        initial_length = self.initial_metrics[0][0]
-        tip_center = np.mean(final_positions[self.tip_indices], axis=0)
-        normalized_tip_deflection = abs(tip_center[2] - self.initial_tip_center[2]) / initial_length
+        tip_deflections = np.abs(self.normalized_tip_deflections(final_positions))
         if self.target_activation > 0.0:
-            if normalized_tip_deflection < 0.02:
-                raise ValueError(
-                    f"Upper-layer contraction did not bend the plate: |tip dz|/L0={normalized_tip_deflection:.6f}"
-                )
+            if np.max(tip_deflections) < 0.02:
+                raise ValueError(f"Upper-layer contraction did not bend the plates: |tip dz|/L0={tip_deflections}")
+            if tip_deflections[0] <= tip_deflections[2]:
+                raise ValueError(f"The soft plate did not bend more than the stiff plate: {tip_deflections}")
 
     @staticmethod
     def create_parser():
         parser = newton.examples.create_parser()
         parser.set_defaults(num_frames=180)
-        parser.add_argument("--activation", type=float, default=1.0)
+        parser.add_argument("--activation", type=float, default=0.3)
         parser.add_argument("--active-stiffness", type=float, default=1.0e5)
         parser.add_argument("--ramp-time", type=float, default=1.0)
         parser.add_argument("--director-x", type=float, default=1.0)
@@ -210,10 +255,12 @@ class Example:
         parser.add_argument("--cell-size", type=float, default=0.05)
         parser.add_argument("--thickness-cell-size", type=float, default=0.05)
         parser.add_argument("--active-layer-fraction", type=float, default=0.5)
+        parser.add_argument("--plate-gap", type=float, default=0.2)
+        parser.add_argument("--material-scales", type=float, nargs=3, default=(0.5, 1.0, 2.0))
         parser.add_argument("--density", type=float, default=1000.0)
         parser.add_argument("--k-mu", type=float, default=1.0e5)
         parser.add_argument("--k-lambda", type=float, default=1.0e5)
-        parser.add_argument("--k-damp", type=float, default=1.0e3)
+        parser.add_argument("--k-damp", type=float, default=1.0e4)
         parser.add_argument("--log-interval", type=int, default=30)
         return parser
 
