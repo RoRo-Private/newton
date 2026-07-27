@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>WebXR → Newton</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <style>
+    body { margin:0; background:#111; color:#eee; font-family:monospace; }
+    button { font-size:24px; padding:12px 18px; margin:14px; border-radius:8px; }
+    #log { white-space:pre-wrap; margin:12px; font-size:13px; opacity:0.85; }
+  </style>
+</head>
+<body>
+  <button id="enter">Enter AR</button>
+  <div id="log">boot…</div>
+
+<script>
+// ── config ──────────────────────────────────────────────────────────────────
+// WS_URL must use the same IP you opened this page from.
+const WS_URL = `wss://${location.hostname}:8765`;
+
+// Grip threshold: analog value above this → gripper closed (for display only;
+// the raw analog value is always sent).
+const GRIP_THRESHOLD = 0.5;
+// ────────────────────────────────────────────────────────────────────────────
+
+let ws = null;
+let xrSession = null;
+let refSpace = null;
+let frameCount = 0;
+
+function log(s) {
+  const el = document.getElementById("log");
+  el.textContent = `[${new Date().toISOString().slice(11,23)}] ${s}\n` + el.textContent.slice(0, 2000);
+}
+
+// ── WebSocket ────────────────────────────────────────────────────────────────
+function wsConnect() {
+  ws = new WebSocket(WS_URL);
+  ws.onopen  = () => {
+    log("WS open → " + WS_URL);
+    ws.send(JSON.stringify({ type:"hello", from:"quest", t:Date.now() }));
+  };
+  ws.onclose = () => { log("WS closed — retrying in 2 s"); setTimeout(wsConnect, 2000); };
+  ws.onerror = () => log("WS error");
+}
+wsConnect();
+
+// ── WebXR ────────────────────────────────────────────────────────────────────
+async function setupXR() {
+  if (!navigator.xr) { log("navigator.xr missing — needs HTTPS + Quest browser"); return; }
+
+  xrSession = await navigator.xr.requestSession("immersive-ar", {
+    optionalFeatures: ["local-floor", "bounded-floor"],
+  });
+
+  // Minimal WebGL layer required for stable RAF
+  const canvas = document.createElement("canvas");
+  document.body.appendChild(canvas);
+  const gl = canvas.getContext("webgl", { xrCompatible: true });
+  if (gl.makeXRCompatible) await gl.makeXRCompatible();
+  xrSession.updateRenderState({ baseLayer: new XRWebGLLayer(xrSession, gl) });
+
+  refSpace = await xrSession.requestReferenceSpace("local");
+  log("XR session started ✅");
+  xrSession.requestAnimationFrame(onXRFrame);
+}
+
+// ── Pose sender ──────────────────────────────────────────────────────────────
+function sendPose(type, pose, trigger, grip) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const p = pose.transform.position;
+  const q = pose.transform.orientation;
+  ws.send(JSON.stringify({
+    type,
+    t: Date.now(),
+    p: [p.x, p.y, p.z],
+    q: [q.x, q.y, q.z, q.w],
+    trigger,            // analog 0.0 – 1.0  (calibration button)
+    grip,               // analog 0.0 – 1.0  (gripper open/close)
+  }));
+}
+
+// ── XR frame loop ────────────────────────────────────────────────────────────
+function onXRFrame(t, frame) {
+  frame.session.requestAnimationFrame(onXRFrame);
+  if (!refSpace) return;
+
+  for (const src of xrSession.inputSources) {
+    const hand = src.handedness;
+    if (hand !== "left" && hand !== "right") continue;
+
+    const space = src.gripSpace || src.targetRaySpace;
+    if (!space) continue;
+
+    const pose = frame.getPose(space, refSpace);
+    if (!pose) continue;
+
+    // ── buttons ──────────────────────────────────────────────────────────────
+    // Quest 2 gamepad layout:
+    //   buttons[0] = trigger (index finger)  ← calibration
+    //   buttons[1] = grip    (middle finger)  ← gripper open/close
+    let trigger = 0.0, grip = 0.0;
+    if (src.gamepad && src.gamepad.buttons.length > 1) {
+      trigger = src.gamepad.buttons[0].value;  // analog 0.0 – 1.0
+      grip    = src.gamepad.buttons[1].value;  // analog 0.0 – 1.0
+    }
+
+    const prefix = src.gripSpace ? "ctrl_" : "ray_";
+    sendPose(prefix + hand, pose, trigger, grip);
+  }
+
+  // ── debug log every 90 frames (~1 s) ────────────────────────────────────
+  frameCount++;
+  if (frameCount % 90 === 0) log(`frame=${frameCount}`);
+}
+
+// ── UI ───────────────────────────────────────────────────────────────────────
+document.getElementById("enter").onclick = async () => {
+  try {
+    log("Entering VR…");
+    await setupXR();
+  } catch (e) {
+    log("XR error: " + e);
+    console.error(e);
+  }
+};
+</script>
+</body>
+</html>
