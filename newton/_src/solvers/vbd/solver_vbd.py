@@ -529,6 +529,20 @@ class SolverVBD(SolverBase, CouplingInterface):
         """Active contraction amplitudes, shape [tet_count]."""
         self.tet_active_stiffness = wp.zeros(model.tet_count, dtype=float, device=self.device)
         """Active contraction stiffness [Pa], shape [tet_count]."""
+        self.tet_active_stress_directors = wp.zeros(model.tet_count, dtype=wp.vec3, device=self.device)
+        """Material-space active stress directions, shape [tet_count, 3]."""
+        self.tet_active_stress_activations = wp.zeros(model.tet_count, dtype=float, device=self.device)
+        """Active stress amplitudes, shape [tet_count]."""
+        self.tet_active_stress = wp.zeros(model.tet_count, dtype=float, device=self.device)
+        """Active uniaxial stress magnitudes [Pa], shape [tet_count]."""
+        self.tet_active_strain_directors = wp.zeros(model.tet_count, dtype=wp.vec3, device=self.device)
+        """Material-space active strain directions, shape [tet_count, 3]."""
+        self.tet_active_strain_activations = wp.zeros(model.tet_count, dtype=float, device=self.device)
+        """Active strain amplitudes, shape [tet_count]."""
+        self.tet_active_strain_parallel_stretch = wp.ones(model.tet_count, dtype=float, device=self.device)
+        """Target stretch along the active strain direction, shape [tet_count]."""
+        self.tet_active_strain_perpendicular_stretch = wp.ones(model.tet_count, dtype=float, device=self.device)
+        """Target stretch transverse to the active strain direction, shape [tet_count]."""
 
         # Early exit if no particles
         if model.particle_count == 0:
@@ -660,6 +674,122 @@ class SolverVBD(SolverBase, CouplingInterface):
         self.tet_active_directors.assign(directors_np)
         self.tet_active_activations.assign(np.clip(activations_np, 0.0, 1.0))
         self.tet_active_stiffness.assign(stiffness_np)
+
+    def set_tet_active_stress(
+        self,
+        *,
+        directors: np.ndarray | wp.array[wp.vec3],
+        activations: np.ndarray | wp.array[wp.float32],
+        stress: np.ndarray | wp.array[wp.float32],
+    ) -> None:
+        """Configure per-tetrahedron uniaxial active stress.
+
+        The active first Piola-Kirchhoff stress is
+        :math:`P_a = a \\sigma_a n n^T`, where ``n`` is a material-space
+        director. Positive stress contracts along ``n`` under Newton's internal
+        force sign convention. Activations are clamped to ``[0, 1]``.
+
+        Args:
+            directors: Material-space directors with shape ``(tet_count, 3)``.
+            activations: Activation values with shape ``(tet_count,)``.
+            stress: Active stress magnitudes [Pa] with shape ``(tet_count,)``.
+
+        Raises:
+            TypeError: If an input has an unsupported Warp dtype.
+            ValueError: If an input has the wrong shape, device, or non-finite values.
+        """
+        directors_np, activations_np, stress_np = self._validate_tet_active_inputs(
+            directors=directors,
+            activations=activations,
+            scalar=stress,
+            scalar_name="stress",
+        )
+        self.tet_active_stress_directors.assign(directors_np)
+        self.tet_active_stress_activations.assign(np.clip(activations_np, 0.0, 1.0))
+        self.tet_active_stress.assign(stress_np)
+
+    def set_tet_active_strain(
+        self,
+        *,
+        directors: np.ndarray | wp.array[wp.vec3],
+        activations: np.ndarray | wp.array[wp.float32],
+        parallel_stretch: np.ndarray | wp.array[wp.float32],
+        perpendicular_stretch: np.ndarray | wp.array[wp.float32],
+    ) -> None:
+        """Configure per-tetrahedron active strain targets.
+
+        Active strain evaluates the volumetric material using
+        ``F_elastic = F * inverse(F_active)`` with
+        ``F_active = lambda_parallel * n n^T + lambda_perp * (I - n n^T)``.
+        Activations interpolate the target stretches from identity to the
+        supplied stretches and are clamped to ``[0, 1]``.
+
+        Args:
+            directors: Material-space directors with shape ``(tet_count, 3)``.
+            activations: Activation values with shape ``(tet_count,)``.
+            parallel_stretch: Target stretch along each director, shape ``(tet_count,)``.
+            perpendicular_stretch: Target stretch transverse to each director, shape ``(tet_count,)``.
+
+        Raises:
+            TypeError: If an input has an unsupported Warp dtype.
+            ValueError: If an input has the wrong shape, device, non-finite values, or non-positive stretches.
+        """
+        directors_np, activations_np, parallel_np = self._validate_tet_active_inputs(
+            directors=directors,
+            activations=activations,
+            scalar=parallel_stretch,
+            scalar_name="parallel_stretch",
+        )
+        _, _, perpendicular_np = self._validate_tet_active_inputs(
+            directors=directors_np,
+            activations=activations_np,
+            scalar=perpendicular_stretch,
+            scalar_name="perpendicular_stretch",
+        )
+        if np.any(parallel_np <= 0.0):
+            raise ValueError("parallel_stretch must contain only positive values.")
+        if np.any(perpendicular_np <= 0.0):
+            raise ValueError("perpendicular_stretch must contain only positive values.")
+
+        self.tet_active_strain_directors.assign(directors_np)
+        self.tet_active_strain_activations.assign(np.clip(activations_np, 0.0, 1.0))
+        self.tet_active_strain_parallel_stretch.assign(parallel_np)
+        self.tet_active_strain_perpendicular_stretch.assign(perpendicular_np)
+
+    def _validate_tet_active_inputs(
+        self,
+        *,
+        directors: np.ndarray | wp.array[wp.vec3],
+        activations: np.ndarray | wp.array[wp.float32],
+        scalar: np.ndarray | wp.array[wp.float32],
+        scalar_name: str,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        tet_count = self.model.tet_count
+
+        def to_numpy(name, value, shape, warp_dtype):
+            if isinstance(value, wp.array):
+                if value.device != self.device:
+                    raise ValueError(f"{name} is on device {value.device}, expected solver device {self.device}.")
+                if value.dtype != warp_dtype:
+                    raise TypeError(f"{name} must have Warp dtype {warp_dtype}, got {value.dtype}.")
+                array = value.numpy()
+            else:
+                array = np.asarray(value, dtype=np.float32)
+            if array.shape != shape:
+                raise ValueError(f"{name} must have shape {shape}, got {array.shape}.")
+            if not np.all(np.isfinite(array)):
+                raise ValueError(f"{name} must contain only finite values.")
+            return np.asarray(array, dtype=np.float32)
+
+        directors_np = to_numpy("directors", directors, (tet_count, 3), wp.vec3)
+        activations_np = to_numpy("activations", activations, (tet_count,), wp.float32)
+        scalar_np = to_numpy(scalar_name, scalar, (tet_count,), wp.float32)
+        active = activations_np > 0.0
+        if np.any(active):
+            director_norms = np.linalg.norm(directors_np[active], axis=1)
+            if np.any(director_norms <= 1.0e-8):
+                raise ValueError("directors must be nonzero for active tetrahedra.")
+        return directors_np, activations_np, scalar_np
 
     def _init_rigid_system(
         self,
@@ -2749,6 +2879,13 @@ class SolverVBD(SolverBase, CouplingInterface):
                         self.tet_active_directors,
                         self.tet_active_activations,
                         self.tet_active_stiffness,
+                        self.tet_active_stress_directors,
+                        self.tet_active_stress_activations,
+                        self.tet_active_stress,
+                        self.tet_active_strain_directors,
+                        self.tet_active_strain_activations,
+                        self.tet_active_strain_parallel_stretch,
+                        self.tet_active_strain_perpendicular_stretch,
                         self.particle_adjacency,
                         self.particle_forces,
                         self.particle_hessians,
@@ -2784,6 +2921,13 @@ class SolverVBD(SolverBase, CouplingInterface):
                         self.tet_active_directors,
                         self.tet_active_activations,
                         self.tet_active_stiffness,
+                        self.tet_active_stress_directors,
+                        self.tet_active_stress_activations,
+                        self.tet_active_stress,
+                        self.tet_active_strain_directors,
+                        self.tet_active_strain_activations,
+                        self.tet_active_strain_parallel_stretch,
+                        self.tet_active_strain_perpendicular_stretch,
                         self.particle_adjacency,
                         self.particle_forces,
                         self.particle_hessians,

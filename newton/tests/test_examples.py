@@ -1202,6 +1202,38 @@ add_example_test(
     },
     use_viewer=True,
 )
+add_example_test(
+    TestSoftbodyExamples,
+    name="softbody.example_softbody_vbd_active_stress",
+    devices=test_devices,
+    test_options={
+        "num-frames": 60,
+        "ramp-time": 0.25,
+        "dim-x": 6,
+        "dim-y": 4,
+        "dim-z": 2,
+        "substeps": 5,
+        "iterations": 10,
+        "log-interval": 60,
+    },
+    use_viewer=True,
+)
+add_example_test(
+    TestSoftbodyExamples,
+    name="softbody.example_softbody_vbd_active_strain",
+    devices=test_devices,
+    test_options={
+        "num-frames": 60,
+        "ramp-time": 0.25,
+        "dim-x": 6,
+        "dim-y": 4,
+        "dim-z": 2,
+        "substeps": 5,
+        "iterations": 10,
+        "log-interval": 60,
+    },
+    use_viewer=True,
+)
 
 
 class TestKaminoExamples(unittest.TestCase):

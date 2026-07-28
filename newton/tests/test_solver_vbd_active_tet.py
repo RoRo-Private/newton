@@ -133,6 +133,105 @@ def _build_active_grid(device, *, fix_left, activation, active_stiffness, steps=
     return initial_positions, state_0.particle_q.numpy().copy()
 
 
+def _build_active_stress_grid(device, *, activation, active_stress, steps=180):
+    builder = newton.ModelBuilder()
+    builder.add_soft_grid(
+        pos=wp.vec3(0.0),
+        rot=wp.quat_identity(),
+        vel=wp.vec3(0.0),
+        dim_x=6,
+        dim_y=2,
+        dim_z=2,
+        cell_x=0.05,
+        cell_y=0.05,
+        cell_z=0.05,
+        density=1000.0,
+        k_mu=1.0e5,
+        k_lambda=1.0e5,
+        k_damp=1.0e3,
+        fix_left=True,
+        particle_radius=0.0,
+        add_surface_mesh_edges=False,
+    )
+    builder.color()
+    model = builder.finalize(device=device)
+    model.gravity.zero_()
+
+    solver = newton.solvers.SolverVBD(
+        model,
+        iterations=20,
+        particle_enable_self_contact=False,
+        particle_enable_tile_solve=False,
+    )
+    solver.set_tet_active_stress(
+        directors=np.tile(np.array([1.0, 0.0, 0.0], dtype=np.float32), (model.tet_count, 1)),
+        activations=np.full(model.tet_count, activation, dtype=np.float32),
+        stress=np.full(model.tet_count, active_stress, dtype=np.float32),
+    )
+
+    state_0 = model.state()
+    state_1 = model.state()
+    control = model.control()
+    initial_positions = state_0.particle_q.numpy().copy()
+    dt = 1.0 / 600.0
+    for _ in range(steps):
+        state_0.clear_forces()
+        solver.step(state_0, state_1, control, None, dt)
+        state_0, state_1 = state_1, state_0
+
+    return initial_positions, state_0.particle_q.numpy().copy()
+
+
+def _build_active_strain_grid(device, *, activation, parallel_stretch, perpendicular_stretch, steps=180):
+    builder = newton.ModelBuilder()
+    builder.add_soft_grid(
+        pos=wp.vec3(0.0),
+        rot=wp.quat_identity(),
+        vel=wp.vec3(0.0),
+        dim_x=6,
+        dim_y=2,
+        dim_z=2,
+        cell_x=0.05,
+        cell_y=0.05,
+        cell_z=0.05,
+        density=1000.0,
+        k_mu=1.0e5,
+        k_lambda=1.0e5,
+        k_damp=1.0e3,
+        fix_left=True,
+        particle_radius=0.0,
+        add_surface_mesh_edges=False,
+    )
+    builder.color()
+    model = builder.finalize(device=device)
+    model.gravity.zero_()
+
+    solver = newton.solvers.SolverVBD(
+        model,
+        iterations=20,
+        particle_enable_self_contact=False,
+        particle_enable_tile_solve=False,
+    )
+    solver.set_tet_active_strain(
+        directors=np.tile(np.array([1.0, 0.0, 0.0], dtype=np.float32), (model.tet_count, 1)),
+        activations=np.full(model.tet_count, activation, dtype=np.float32),
+        parallel_stretch=np.full(model.tet_count, parallel_stretch, dtype=np.float32),
+        perpendicular_stretch=np.full(model.tet_count, perpendicular_stretch, dtype=np.float32),
+    )
+
+    state_0 = model.state()
+    state_1 = model.state()
+    control = model.control()
+    initial_positions = state_0.particle_q.numpy().copy()
+    dt = 1.0 / 600.0
+    for _ in range(steps):
+        state_0.clear_forces()
+        solver.step(state_0, state_1, control, None, dt)
+        state_0, state_1 = state_1, state_0
+
+    return initial_positions, state_0.particle_q.numpy().copy()
+
+
 def _extent_ratios(initial_positions, final_positions):
     initial_extents = np.ptp(initial_positions, axis=0)
     final_extents = np.ptp(final_positions, axis=0)
@@ -295,6 +394,50 @@ def test_active_tet_setter_validation(test, device):
         )
 
 
+def test_active_tet_stress_and_strain_setter_validation(test, device):
+    """Verify active stress and strain setters validate and store per-tet inputs."""
+    builder = newton.ModelBuilder()
+    for position in (
+        wp.vec3(0.0, 0.0, 0.0),
+        wp.vec3(1.0, 0.0, 0.0),
+        wp.vec3(0.0, 1.0, 0.0),
+        wp.vec3(0.0, 0.0, 1.0),
+    ):
+        builder.add_particle(position, wp.vec3(0.0), mass=1.0, radius=0.0)
+    builder.add_tetrahedron(0, 1, 2, 3, k_mu=1.0e5, k_lambda=1.0e5, k_damp=0.0)
+    builder.color()
+    model = builder.finalize(device=device)
+    solver = newton.solvers.SolverVBD(model, particle_enable_tile_solve=False)
+
+    solver.set_tet_active_stress(
+        directors=np.array([[1.0, 0.0, 0.0]], dtype=np.float32),
+        activations=np.array([1.5], dtype=np.float32),
+        stress=np.array([2.0e4], dtype=np.float32),
+    )
+    np.testing.assert_array_equal(solver.tet_active_stress_activations.numpy(), np.array([1.0]))
+    np.testing.assert_array_equal(solver.tet_active_stress.numpy(), np.array([2.0e4]))
+
+    solver.set_tet_active_strain(
+        directors=np.array([[1.0, 0.0, 0.0]], dtype=np.float32),
+        activations=np.array([0.5], dtype=np.float32),
+        parallel_stretch=np.array([0.8], dtype=np.float32),
+        perpendicular_stretch=np.array([1.1], dtype=np.float32),
+    )
+    np.testing.assert_array_equal(solver.tet_active_strain_activations.numpy(), np.array([0.5]))
+    np.testing.assert_allclose(solver.tet_active_strain_parallel_stretch.numpy(), np.array([0.8]), rtol=0.0, atol=1e-7)
+    np.testing.assert_allclose(
+        solver.tet_active_strain_perpendicular_stretch.numpy(), np.array([1.1]), rtol=0.0, atol=1e-7
+    )
+
+    with test.assertRaisesRegex(ValueError, "parallel_stretch must contain only positive"):
+        solver.set_tet_active_strain(
+            directors=np.array([[1.0, 0.0, 0.0]], dtype=np.float32),
+            activations=np.array([1.0], dtype=np.float32),
+            parallel_stretch=np.array([0.0], dtype=np.float32),
+            perpendicular_stretch=np.array([1.0], dtype=np.float32),
+        )
+
+
 def test_active_tet_zero_activation_regression(test, device):
     """Verify zero activation preserves an unloaded VBD soft body."""
     initial, final = _build_active_grid(
@@ -362,6 +505,27 @@ def test_active_tet_free_body_com(test, device):
     test.assertLess(com_drift, 1.0e-4)
 
 
+def test_active_tet_stress_directional_contraction(test, device):
+    """Verify active stress contracts primarily along its director."""
+    initial, final = _build_active_stress_grid(device, activation=1.0, active_stress=2.0e4)
+    ratios = _extent_ratios(initial, final)
+    test.assertLess(ratios[0], 0.98)
+    test.assertGreater(1.0 - ratios[0], max(abs(1.0 - ratios[1]), abs(1.0 - ratios[2])))
+
+
+def test_active_tet_strain_directional_target(test, device):
+    """Verify active strain drives the grid toward the target directional stretch."""
+    initial, final = _build_active_strain_grid(
+        device,
+        activation=1.0,
+        parallel_stretch=0.8,
+        perpendicular_stretch=1.05,
+    )
+    ratios = _extent_ratios(initial, final)
+    test.assertLess(ratios[0], 0.9)
+    test.assertGreater(ratios[1], 1.0)
+
+
 class TestSolverVBDActiveTet(unittest.TestCase):
     pass
 
@@ -377,6 +541,12 @@ add_function_test(
     TestSolverVBDActiveTet,
     "test_active_tet_setter_validation",
     test_active_tet_setter_validation,
+    devices=devices,
+)
+add_function_test(
+    TestSolverVBDActiveTet,
+    "test_active_tet_stress_and_strain_setter_validation",
+    test_active_tet_stress_and_strain_setter_validation,
     devices=devices,
 )
 add_function_test(
@@ -405,6 +575,18 @@ add_function_test(
 )
 add_function_test(
     TestSolverVBDActiveTet, "test_active_tet_free_body_com", test_active_tet_free_body_com, devices=devices
+)
+add_function_test(
+    TestSolverVBDActiveTet,
+    "test_active_tet_stress_directional_contraction",
+    test_active_tet_stress_directional_contraction,
+    devices=devices,
+)
+add_function_test(
+    TestSolverVBDActiveTet,
+    "test_active_tet_strain_directional_target",
+    test_active_tet_strain_directional_target,
+    devices=devices,
 )
 
 
