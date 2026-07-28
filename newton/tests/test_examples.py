@@ -349,6 +349,12 @@ add_basic_example_test(
 )
 
 add_basic_example_test(name="basic.example_basic_viewer", devices=test_devices, use_viewer=True)
+add_basic_example_test(
+    name="basic.example_artificial_muscle_joint",
+    devices=test_devices,
+    test_options={"num-frames": 2},
+    use_viewer=True,
+)
 
 add_basic_example_test(
     name="basic.example_basic_joints",
@@ -1233,6 +1239,41 @@ add_example_test(
         "log-interval": 60,
     },
     use_viewer=True,
+)
+add_example_test(
+    TestSoftbodyExamples,
+    name="softbody.example_softbody_vbd_linear_contraction",
+    devices=test_devices,
+    test_options={
+        "num-frames": 60,
+        "ramp-time": 0.25,
+        "dim-x": 6,
+        "dim-y": 3,
+        "dim-z": 1,
+        "thickness-cell-size": 0.018,
+        "substeps": 5,
+        "iterations": 10,
+        "log-interval": 60,
+    },
+    use_viewer=True,
+)
+add_example_test(
+    TestSoftbodyExamples,
+    name="softbody.example_softbody_vbd_linear_contraction",
+    devices=test_devices,
+    test_options={
+        "shape": "cylinder",
+        "num-frames": 60,
+        "ramp-time": 0.25,
+        "dim-x": 6,
+        "radial-segments": 2,
+        "angular-segments": 12,
+        "substeps": 5,
+        "iterations": 10,
+        "log-interval": 60,
+    },
+    use_viewer=True,
+    test_suffix="cylinder",
 )
 
 
